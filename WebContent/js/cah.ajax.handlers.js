@@ -1,0 +1,177 @@
+/*
+ * Copyright (c) 2012, Andy Janata
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ * 
+ * * Redistributions of source code must retain the above copyright notice, this list of conditions
+ *   and the following disclaimer.
+ * * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *   conditions and the following disclaimer in the documentation and/or other materials provided
+ *   with the distribution.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY
+ * WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/**
+ * AJAX callback handlers. TODO make this individual files instead of all in one.
+ * 
+ * @author Andy Janata (ajanata@socialgamer.net)
+ */
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.REGISTER] = function(data) {
+  cah.nickname = data[cah.$.AjaxResponse.NICKNAME];
+  cah.log.status("You are connected as " + cah.nickname);
+  $("#welcome").hide();
+  $("#canvass").show();
+
+  cah.ajax.after_registered();
+};
+
+cah.ajax.ErrorHandlers[cah.$.AjaxOperation.REGISTER] = function(data) {
+  $("#nickbox_error").text(cah.$.ErrorCode_msg[data[cah.$.AjaxResponse.ERROR_CODE]]);
+  $("#nickname").focus();
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.FIRST_LOAD] = function(data) {
+  cah.CardSet.populateCardSets(data[cah.$.AjaxResponse.CARD_SETS]);
+
+  if (data[cah.$.AjaxResponse.IN_PROGRESS]) {
+    cah.nickname = data[cah.$.AjaxResponse.NICKNAME];
+    cah.log.status("You have reconnected as " + cah.nickname);
+    $("#welcome").hide();
+    $("#canvass").show();
+    cah.ajax.after_registered();
+
+    switch (data[cah.$.AjaxResponse.NEXT]) {
+      case cah.$.ReconnectNextAction.GAME:
+        cah.log.status("Reconnecting to game...");
+        cah.Game.joinGame(data[cah.$.AjaxResponse.GAME_ID]);
+        break;
+      case cah.$.ReconnectNextAction.NONE:
+        // pass
+        break;
+      default:
+        cah.log.error("Unknown reconnect next action " + data[cah.$.AjaxResponse.NEXT]);
+    }
+  }
+};
+
+cah.ajax.ErrorHandlers[cah.$.AjaxOperation.FIRST_LOAD] = function(data) {
+  // pass
+};
+
+/**
+ * This should only be called after we have a valid registration with the server, as we start doing
+ * long polling here.
+ */
+cah.ajax.after_registered = function() {
+  cah.log.debug("done registering");
+  $("#canvas").removeClass("hide");
+  $("#bottom").removeClass("hide");
+  // TODO once there are channels, this needs to specify the global channel
+  cah.Ajax.build(cah.$.AjaxOperation.NAMES).run();
+  cah.GameList.instance.show();
+  cah.GameList.instance.update();
+  cah.longpoll.longPoll();
+  // Dirty that we have to do this here... Oh well.
+  app_resize();
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.CHAT] = function(data) {
+  // pass
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.LOG_OUT] = function(data) {
+  window.location.reload();
+};
+
+cah.ajax.ErrorHandlers[cah.$.AjaxOperation.LOG_OUT] = cah.ajax.SuccessHandlers.logout;
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.NAMES] = function(data) {
+  cah.log.status("Currently connected: " + data[cah.$.AjaxResponse.NAMES].join(", "));
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.GAME_LIST] = function(data) {
+  cah.GameList.instance.processUpdate(data);
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.JOIN_GAME] = function(data, req) {
+  cah.Game.joinGame(req[cah.$.AjaxRequest.GAME_ID]);
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.CREATE_GAME] = function(data) {
+  cah.Game.joinGame(data[cah.$.AjaxResponse.GAME_ID]);
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.GET_GAME_INFO] = function(data, req) {
+  var game = cah.currentGames[req[cah.$.AjaxRequest.GAME_ID]];
+  if (game) {
+    game.updateGameStatus(data);
+  }
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.LEAVE_GAME] = function(data, req) {
+  var game = cah.currentGames[req[cah.$.AjaxRequest.GAME_ID]];
+  if (game) {
+    game.dispose();
+    delete cah.currentGames[req[cah.$.AjaxRequest.GAME_ID]];
+  }
+  cah.GameList.instance.update();
+  cah.GameList.instance.show();
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.START_GAME] = function(data, req) {
+  var game = cah.currentGames[data[cah.$.AjaxRequest.GAME_ID]];
+  if (game) {
+    game.startGameComplete();
+  }
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.GET_CARDS] = function(data, req) {
+  var gameId = req[cah.$.AjaxRequest.GAME_ID];
+  var game = cah.currentGames[gameId];
+  if (game) {
+    game.dealtCards(data[cah.$.AjaxResponse.HAND]);
+    if (data[cah.$.AjaxResponse.BLACK_CARD]) {
+      game.setBlackCard(data[cah.$.AjaxResponse.BLACK_CARD]);
+    }
+    if (data[cah.$.AjaxResponse.WHITE_CARDS]) {
+      game.setRoundWhiteCards(data[cah.$.AjaxResponse.WHITE_CARDS]);
+    }
+  } else {
+    cah.log.error("Received hand for unknown game id " + gameId);
+  }
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.PLAY_CARD] = function(data, req) {
+  var gameId = req[cah.$.AjaxRequest.GAME_ID];
+  var game = cah.currentGames[gameId];
+  if (game) {
+    game.playCardComplete();
+  }
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.JUDGE_SELECT] = function(data) {
+  // pass?
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.CHANGE_GAME_OPTIONS] = function(data) {
+  // pass
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.KICK] = function(data) {
+  // pass
+};
+
+cah.ajax.SuccessHandlers[cah.$.AjaxOperation.BAN] = function(data) {
+  // pass
+};
